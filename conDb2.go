@@ -9,6 +9,9 @@ import (
 	"time"
 	"ConDB2/godb2"
 	"ConDB2/modules"
+	"github.com/axgle/mahonia"
+
+	"github.com/astaxie/beedb"
 )
 
 var (
@@ -142,6 +145,7 @@ func Update(st *sql.Tx) {
 //查询
 func Query(st *sql.Tx) {
 	sql := "select * from TBL_USER" //TBL_DB2_CLR"// tbl_user"
+
 	rows, err := st.Query(sql)
 	if err != nil {
 		fmt.Println("st.Query-->", err)
@@ -165,21 +169,23 @@ func Query(st *sql.Tx) {
 
 //查询
 func QueryRow(st *sql.Tx, args ...interface{}) {
-	sql := "select * from TBL_USER where id = ? and name = ?" //TBL_DB2_CLR"// tbl_user"
-	row := st.QueryRow(sql,args...)
+	//sql := "select * from TBL_USER where id = ? and name = ?" //TBL_DB2_CLR"// tbl_user"
+	//sql := "select * from TBL_MCHT_INF where MCHT_CD =  ?"//'881350141310000'"
+	sql := "select * from TBL_TXN_STLM_CFG where INS_ID_CD =  ?" //'99991002   '"
+	row := st.QueryRow(sql, args...)
 
-	id := ""
-	na := ""
-	err := row.Scan(&id, &na)
+	tb := &modules.TBL_TXN_STLM_CFG{}
+
+	err := row.Scan(&tb.INS_ID_CD, &tb.CARD_TP, &tb.TXN_NUM, &tb.BUS_CD, &tb.STLM_FLG, &tb.STLM_DESC)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(id, na)
+	fmt.Println(tb)
 	//fmt.Println(utf8.Valid([]byte(na)))
-	//dec := mahonia.NewDecoder("gbk")
-	//na = dec.ConvertString(na)
+	dec := mahonia.NewDecoder("gbk")
+	na := dec.ConvertString(tb.STLM_DESC)
 
-	//fmt.Println(id, na)
+	fmt.Println(na)
 }
 
 //1208	N-1	UTF-8 编码的
@@ -203,10 +209,10 @@ func main() {
 	//conStr := `Driver={IBM DB2 ODBC Driver};Hostname=localhost;Port=50000;Protocol=TCPIP;Database=center;CurrentSchema=GUFT;UID=guft;PWD=gft;`
 	//conStr := "DATABASE=center; HOSTNAME=192.168.127.21; PORT=50000;PROTOCOL=TCPIP;CurrentSchema=GUFT;  UID=guft; PWD=gft;"
 	//conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.74; PORT=56000; PROTOCOL=TCPIP;CurrentSchema=TEST; UID=db2inst1; PWD=db2inst1;"
-	conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.12; PORT=56000; PROTOCOL=TCPIP;  UID=db2inst1; PWD=db2inst1;"
+	//conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.12; PORT=56000; PROTOCOL=TCPIP;  UID=db2inst1; PWD=db2inst1;"
+	conStr := "DATABASE=rcbank; HOSTNAME=192.168.20.78; PORT=56000; PROTOCOL=TCPIP; CurrentSchema=APSTFR;  UID=apstfr; PWD=apstfr;"
 
 	if false {
-
 		db, err := sql.Open("db2-cli", conStr)
 		if err != nil {
 			fmt.Println("open->", err)
@@ -220,12 +226,12 @@ func main() {
 			return
 		}
 		defer st.Commit()
-		SETSchema(st, "gft")
+		//SETSchema(st, "gft")
 		//Query(st)
 		//Update(st)
-		QueryRow(st, "1" ,"东邪西毒")
+		QueryRow(st, "99991002   ")
 	}
-
+	//查询
 	if true {
 		err := godb2.InitModel()
 		if err != nil {
@@ -234,119 +240,93 @@ func main() {
 		}
 		fmt.Println("--------1---------")
 		engine := godb2.GetInstance()
-		engine.SETSchema("gft")
+		//engine.SETSchema("gft")
 
-		tb := &modules.Tbl_user{}
-		//engine.Where("id = ? and name = ?","1","东邪西毒").Get(tb)
-		ok, err := engine.Where("id = ? ","4").Get(tb)
+		tb := &modules.TBL_TXN_STLM_CFG{}
+		ok, err := engine.Where("INS_ID_CD = ? ", "99991002").Get(tb)
 		if err != nil {
 			fmt.Println(err)
 		}
 		if !ok {
 			fmt.Println("not find")
 		}
-		tb1 := &modules.Tbl_user{}
-		ok, err  = engine.FindOne(tb1,"id = ? ","1")
+		fmt.Printf("%+v\n", tb)
+		//tb1 := &modules.Tbl_mcht_inf{}
+		//ok, err = engine.Where("MCHT_CD = ? ", "99991002").Get(tb1)
+		//if err != nil {
+		//	fmt.Println(err)
+		//}
+		//if !ok {
+		//	fmt.Println("not find")
+		//}
+		//fmt.Printf("%+v\n", tb1)
+		tb2 := &modules.TBL_MCHT_BIZ_DEAL{}
+		ok, err = engine.Where("MCHT_CD = ? and PROD_CD = ? and BIZ_CD = ? and TRANS_CD = ?", "999120241110000", "1151", "0000007", "1131").Get(tb2)
 		if err != nil {
 			fmt.Println(err)
 		}
 		if !ok {
 			fmt.Println("not find")
 		}
-		fmt.Printf("%+v\n",tb)
-		fmt.Printf("%+v\n",tb1)
+		fmt.Printf("%+v\n", tb2)
+
+		tb3 := &modules.TBL_MCHT_BIZ_DEAL{PROD_CD: "1151", BIZ_CD: "0000007", TRANS_CD: "1131", OPER_IN: "I", REC_UPD_OPR: "90"}
+		tb3.MCHT_CD = "999120241110002"
+		tb3.REC_CRT_TS = time.Now()
+		tb3.REC_UPD_TS = time.Now()
+		ok, err = engine.Insert(tb3)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if !ok {
+			fmt.Println("not find")
+		}
+		fmt.Printf("%+v\n", tb3)
+
+
+
+		//tb2 := &modules.TBL_MCHT_BIZ_DEAL{}
+		//ok, err = engine.Where("MCHT_CD = ? and PROD_CD = ? and BIZ_CD = ? and TRANS_CD = ?", "999120241110000", "1151", "0000007", "1131").Get(tb2)
+		//if err != nil {
+		//	fmt.Println(err)
+		//}
+		//if !ok {
+		//	fmt.Println("not find")
+		//}
+		//fmt.Printf("%+v\n", tb2)
+		//ok, err  = engine.FindOne(tb1,"MCHT_CD = ? ","881350141310000")
+		//if err != nil {
+		//	fmt.Println(err)
+		//}
+		//if !ok {
+		//	fmt.Println("not find")
+		//}
+		//
+		//fmt.Printf("%+v\n",tb1)
 		//fmt.Println(len(tb.ID))
 	}
-	//stmt, err := st.Prepare("insert into tbl_user (ID, NAME) values (?, ?)")
-	//if err != nil {
-	//	fmt.Println(err)
-	//}
-	//defer stmt.Close()
-	//re,err:= stmt.Exec(6,`黄蓉`)
-	//if err != nil {
-	//	fmt.Println("1->",err)
-	//}
-	//fmt.Println(re.RowsAffected())
-
-	if true {
-		//QueryRow(st)
-	}
-	//st.Commit()
 	if false {
-		//SETSchema(st,"gft")
-		//GetCurrentSchema(st)
-		//CreateSchema(db)
-		//createTable(db)
-		//QueryRow(db)
-		//Insert(db)
-		//Delete(st)
+		fmt.Println("--------------------------------------------")
+		db, err := sql.Open("db2-cli", conStr)
+		if err != nil {
+			fmt.Println("open->", err)
+			return
+		}
+		defer db.Close()
+		orm := beedb.New(db,"pg")
+		beedb.OnDebug = true
+		ormtb2 := &modules.TBL_TXN_STLM_CFG{}
+		err = orm.Where("INS_ID_CD = ? ", "79991201   ").Find(ormtb2)
+		//res,err:=orm.Exec(`INSERT INTO TBL_MCHT_BIZ_DEAL(MCHT_CD, PROD_CD, BIZ_CD, TRANS_CD, OPER_IN, REC_OPR_ID, REC_UPD_OPR, REC_CRT_TS, REC_UPD_TS) VALUES ('999120241110004', '1151', '0000007', '1131', 'I', '', '14402', '2016-11-18 10:28:04', '2017-03-03 17:22:12')`)
+		if err != nil {
+			fmt.Println("--", err)
+		}
+		fmt.Println(ormtb2)
+		//fmt.Println(res.RowsAffected())
 
 	}
-
-	if false {
-		//MaxConnect(db)
-	}
-
 	time.Sleep(2 * time.Second)
-
-	//db.SetMaxIdleConns(2)
-	//sql := "select * from TBL_DB2_CLR"
-	//rows, err := db.Query(sql)
-	//if err != nil {
-	//	fmt.Println("Query->",err)
-	//	return
-	//}
-	//defer rows.Close()
-	//rs,_:=rows.Columns()
-	//fmt.Println(rs)
-	//
-	//for rows.Next() {
-	//	na := ""
-	//	id := ""
-	//	err = rows.Scan(&id,&na)
-	//	if err != nil {
-	//		panic(err)
-	//	}
-	//	fmt.Println(utf8.FullRuneInString(na))
-	//	dec := mahonia.NewDecoder("gbk")
-	//	na = dec.ConvertString(na)
-	//
-	//	fmt.Println(id, na)
-	//}
-	//
-	//if err := dbOperations(); err != nil {
-	//	fmt.Fprintln(os.Stderr, err)
-	//}
-	//var i ,n string
-	//row:= db.QueryRow(sql)
-	//row.Scan(&i ,&n )
-	//fmt.Println(i,n)
-
-	//insql:="insert into TBL_DB2_CLR values('3','西毒')"
-	//res, err := db.Exec(insql)
-	//fmt.Println(res)
-	//if err != nil {
-	//	fmt.Println("Query->",err)
-	//	return
-	//}
-	//rows, err := db.Query(sql)
-	//if err != nil {
-	//	fmt.Println("Query->",err)
-	//	return
-	//}
-	//for rows.Next() {
-	//	na := ""
-	//	id := ""
-	//	err = rows.Scan(&id,&na)
-	//	if err != nil {
-	//		panic(err)
-	//	}
-	//	fmt.Println(utf8.FullRuneInString(na))
-	//	//dec := mahonia.NewDecoder("gbk")
-	//	//na = dec.ConvertString(na)
-	//
-	//	fmt.Println(id, na)
-	//}
 }
 
 func MaxConnect(db *sql.DB) {

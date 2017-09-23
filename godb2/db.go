@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"github.com/axgle/mahonia"
 	"strconv"
+	"strings"
 )
 
 type EngineDb2 struct {
@@ -35,7 +36,8 @@ func opendb(file string) (*EngineDb2, error) {
 	//dbdata["idlcon"] = talkChan[0]["db"]["idlcon"]
 	//dbdata["maxcon"] = talkChan[0]["db"]["maxcon"]
 	//CurrentSchema=GUFT;
-	conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.12; PORT=56000; PROTOCOL=TCPIP; UID=db2inst1; PWD=db2inst1;"
+	//conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.12; PORT=56000; PROTOCOL=TCPIP; UID=db2inst1; PWD=db2inst1;"
+	conStr := "DATABASE=rcbank; HOSTNAME=192.168.20.78; PORT=56000; PROTOCOL=TCPIP; CurrentSchema=APSTFR;  UID=apstfr; PWD=apstfr;"
 
 	d, err := sql.Open("db2-cli", conStr)
 	if err != nil {
@@ -66,12 +68,13 @@ func (e *EngineDb2) Where(query interface{}, args ...interface{}) *EngStmt {
 }
 func (tx *EngStmt) Get(bean interface{}) (bool, error) {
 	v := reflect.ValueOf(bean).Elem()
+	t := reflect.TypeOf(bean).Elem()
 	if tb, ok := v.Interface().(TableName); ok {
 		tx.tableName = tb.TableName()
 	}
 	qs := "select * from " + tx.tableName + " where " + tx.Query.(string)
-	//fmt.Println(qs)
-	//fmt.Println(tx.Args)
+	fmt.Println(qs)
+	fmt.Println(tx.Args)
 	rows, err := tx.Tx.Query(qs, tx.Args...)
 	//fmt.Println("---------")
 	if err != nil {
@@ -79,47 +82,59 @@ func (tx *EngStmt) Get(bean interface{}) (bool, error) {
 		return false, err
 	}
 	count := v.NumField()
-	//fmt.Println(count)
-	for rows.Next() {
-		id := make([]interface{}, count)
-		for j := 0; j < count; j++ {
-			k := v.Field(j).Kind()
-			switch k {
-			case reflect.Int:
-				id[j] = 0
-			case reflect.String:
-				id[j] = ""
-			default:
-				id[j] = ""
+	fmt.Println(count)
+
+	if true {
+		for rows.Next() {
+			id := make([]interface{}, count)
+			for j := 0; j < count; j++ {
+				k := v.Field(j).Kind()
+				switch k {
+				case reflect.Int:
+					id[j] = 0
+				case reflect.String:
+					id[j] = ""
+				case reflect.Struct:
+					id[j] = reflect.New(reflect.TypeOf(reflect.Struct))
+				default:
+					fmt.Println("init type->", t.Field(j).Name, k)
+					id[j] = ""
+				}
 			}
-		}
-		it := make([]interface{}, count)
-		for j := 0; j < count; j++ {
-			it[j] = &id[j]
-		}
-		err = rows.Scan(it...)
-		if err != nil {
-			panic(err)
-		}
-		dec := mahonia.NewDecoder("gbk")
-		for j := 0; j < count; j++ {
-			k := reflect.ValueOf(id[j]).Kind()
-			//fmt.Println("----String--1---", id[j])
-			switch k {
-			case reflect.Int, reflect.Int32:
-				str := strconv.FormatInt(reflect.ValueOf(id[j]).Int(), 10)
-				i, _ := strconv.Atoi(str)
-				v.Field(j).Set(reflect.ValueOf(i))
-			case reflect.String, reflect.Slice:
-				data := reflect.ValueOf(id[j]).Interface().([]byte)
-				str := string(data)
-				r := dec.ConvertString(str)
-				//fmt.Println("----String--2---", r)
-				v.Field(j).Set(reflect.ValueOf(r))
-			default:
-				//fmt.Println("----default----", reflect.ValueOf(id[j]).Kind(), id[j])
+			//fmt.Printf("id->%+v", id)
+			it := make([]interface{}, count)
+			for j := 0; j < count; j++ {
+				it[j] = &id[j]
 			}
-			//v.Field(j).Set(reflect.ValueOf(r))
+			err = rows.Scan(it...)
+			if err != nil {
+				panic(err)
+			}
+			dec := mahonia.NewDecoder("gbk")
+			for j := 0; j < count; j++ {
+				k := reflect.ValueOf(id[j]).Kind()
+				//fmt.Println("----String--1---", id[j])
+				switch k {
+				case reflect.Int, reflect.Int32:
+					str := strconv.FormatInt(reflect.ValueOf(id[j]).Int(), 10)
+					i, _ := strconv.Atoi(str)
+					v.Field(j).Set(reflect.ValueOf(i))
+				case reflect.String:
+					v.Field(j).Set(reflect.ValueOf(id[j]))
+				case reflect.Slice:
+					data := reflect.ValueOf(id[j]).Interface().([]byte)
+					str := string(data)
+					r := dec.ConvertString(str)
+					//fmt.Println("----String--2---", r)
+					v.Field(j).Set(reflect.ValueOf(r))
+				case reflect.Struct:
+					v.Field(j).Set(reflect.ValueOf(id[j]))
+				default:
+					//reflect.Copy(v.Field(j),reflect.ValueOf(id[j]))
+					fmt.Println("----default----", reflect.TypeOf(id[j]).Kind(), id[j])
+				}
+				//v.Field(j).Set(reflect.ValueOf(r))
+			}
 		}
 	}
 	return true, nil
@@ -131,6 +146,53 @@ func (s *EngineDb2) FindOne(links interface{}, querystring string, args ...inter
 }
 
 func (s *EngStmt) Uptade(bean interface{}) (bool, error) {
+
+	return true, nil
+}
+
+func (s *EngineDb2) Insert(bean interface{}) (bool, error) {
+	v := reflect.ValueOf(bean).Elem()
+	t := reflect.TypeOf(bean).Elem()
+	tblName := ""
+	if tb, ok := v.Interface().(TableName); ok {
+		tblName = tb.TableName()
+	}
+	count := v.NumField()
+	//fmt.Println(count)
+	ns := []string{}
+	nv := []string{}
+	for i := 0; i < count; i++ {
+		ns = append(ns, t.Field(i).Name)
+		k := v.Field(i).Kind()
+		switch k {
+		case reflect.Struct:
+			//fmt.Println(k, t.Field(i).Name, v.Field(i).Elem())
+			vv := fmt.Sprintf("%v",v.Field(i))
+			//fmt.Println(k, t.Field(i).Name, v.Field(i).String(),vv)
+			//fmt.Println(strings.Split(vv," +")[0])
+			vvv := strings.Split(vv," +")[0]
+			nv = append(nv, "'"+vvv+"'")
+		default:
+			nv = append(nv, "'"+v.Field(i).String()+"'")
+		}
+
+	}
+	su := tblName + " (" + strings.Join(ns, ", ") + ")"
+	sv := " VALUES (" + strings.Join(nv, ", ") + ")"
+	//fmt.Println(su)
+	//fmt.Println(nv)
+	fmt.Println(sv)
+
+	Sql := `INSERT INTO ` + su + sv //+" VALUES (" + ")"
+	//fmt.Println(Sql)
+	//Sql := `INSERT INTO tbl_user(ID, NAME) values('5', '国境')`
+	if true {
+		_, err := s.db.Exec(Sql)
+		if err != nil {
+			fmt.Println(err)
+			return false, err
+		}
+	}
 
 	return true, nil
 }
