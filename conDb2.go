@@ -238,17 +238,27 @@ func main() {
 			fmt.Println("InitModel->", err)
 			return
 		}
-		fmt.Println("--------1---------")
-		engine := godb2.GetInstance()
+		fmt.Println("--------find---------")
+		e := godb2.GetInstance()
+		defer e.Close()
+		engine ,err := e.Begin()
 		//engine.SETSchema("gft")
+		if err != nil {
+			fmt.Println("Begin->", err)
+			return
+		}
 
 		tb := &modules.TBL_TXN_STLM_CFG{}
 		ok, err := engine.Where("INS_ID_CD = ? ", "99991002").Get(tb)
 		if err != nil {
 			fmt.Println(err)
+			engine.Rollback()
+			return
 		}
 		if !ok {
 			fmt.Println("not find")
+			engine.Rollback()
+			return
 		}
 		fmt.Printf("%+v\n", tb)
 		//tb1 := &modules.Tbl_mcht_inf{}
@@ -264,47 +274,49 @@ func main() {
 		ok, err = engine.Where("MCHT_CD = ? and PROD_CD = ? and BIZ_CD = ? and TRANS_CD = ?", "999120241110000", "1151", "0000007", "1131").Get(tb2)
 		if err != nil {
 			fmt.Println(err)
-		}
-		if !ok {
-			fmt.Println("not find")
-		}
-		fmt.Printf("%+v\n", tb2)
-
-		tb3 := &modules.TBL_MCHT_BIZ_DEAL{PROD_CD: "1151", BIZ_CD: "0000007", TRANS_CD: "1131", OPER_IN: "I", REC_UPD_OPR: "90"}
-		tb3.MCHT_CD = "999120241110002"
-		tb3.REC_CRT_TS = time.Now()
-		tb3.REC_UPD_TS = time.Now()
-		ok, err = engine.Insert(tb3)
-		if err != nil {
-			fmt.Println(err)
+			engine.Rollback()
 			return
 		}
 		if !ok {
 			fmt.Println("not find")
+			engine.Rollback()
+			return
 		}
-		fmt.Printf("%+v\n", tb3)
+		fmt.Printf("%+v\n", tb2)
+		//==========Insert=======
+		if false {
+			tb3 := &modules.TBL_MCHT_BIZ_DEAL{PROD_CD: "1151", BIZ_CD: "0000007", TRANS_CD: "1131", OPER_IN: "I", REC_UPD_OPR: "90"}
+			tb3.MCHT_CD = "999120241110003"
+			//tb3.REC_CRT_TS = time.Now()
+			//tb3.REC_UPD_TS = time.Now()
+			ok, err = engine.Insert(tb3)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			if !ok {
+				fmt.Println("not find")
+			}
+			fmt.Printf("%+v\n", tb3)
+		}
+		//========================
+		//==========Uptade=======
+		if true{
+			tb := &modules.TBL_MCHT_BIZ_DEAL{OPER_IN:"I",REC_OPR_ID:"3"}
+			ok, err = engine.Where("MCHT_CD = ? and PROD_CD = ? and BIZ_CD = ? and TRANS_CD = ?", "999120241110003", "1151", "0000007", "1131").Uptade(tb)
+			if err != nil {
+				fmt.Println(err)
+			}
+			if !ok {
+				fmt.Println("not find")
+				engine.Rollback()
+				return
+			}
 
-
-
-		//tb2 := &modules.TBL_MCHT_BIZ_DEAL{}
-		//ok, err = engine.Where("MCHT_CD = ? and PROD_CD = ? and BIZ_CD = ? and TRANS_CD = ?", "999120241110000", "1151", "0000007", "1131").Get(tb2)
-		//if err != nil {
-		//	fmt.Println(err)
-		//}
-		//if !ok {
-		//	fmt.Println("not find")
-		//}
-		//fmt.Printf("%+v\n", tb2)
-		//ok, err  = engine.FindOne(tb1,"MCHT_CD = ? ","881350141310000")
-		//if err != nil {
-		//	fmt.Println(err)
-		//}
-		//if !ok {
-		//	fmt.Println("not find")
-		//}
-		//
-		//fmt.Printf("%+v\n",tb1)
-		//fmt.Println(len(tb.ID))
+			fmt.Printf("%+v\n", tb)
+		}
+		//========================
+		engine.Commit()
 	}
 	if false {
 		fmt.Println("--------------------------------------------")
@@ -314,7 +326,7 @@ func main() {
 			return
 		}
 		defer db.Close()
-		orm := beedb.New(db,"pg")
+		orm := beedb.New(db, "pg")
 		beedb.OnDebug = true
 		ormtb2 := &modules.TBL_TXN_STLM_CFG{}
 		err = orm.Where("INS_ID_CD = ? ", "79991201   ").Find(ormtb2)

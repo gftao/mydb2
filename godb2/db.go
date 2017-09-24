@@ -13,8 +13,8 @@ import (
 
 type EngineDb2 struct {
 	db *sql.DB
-	//Cond
 }
+
 type EngStmt struct {
 	Tx        *sql.Tx
 	Query     interface{}
@@ -55,16 +55,30 @@ func (e *EngineDb2) SETSchema(schema string) error {
 	}
 	return nil
 }
+func (e *EngineDb2) Begin() (*EngStmt, error) {
+	s, err := e.db.Begin()
+	return &EngStmt{Tx: s}, err
+}
+func (e *EngineDb2) Close() error {
+	return   e.db.Close()
+}
+func (tx *EngStmt) Commit() error {
+	return tx.Tx.Commit()
+}
+
+func (tx *EngStmt) Rollback() error {
+	return tx.Tx.Rollback()
+}
+
 func (e *EngineDb2) Query(query interface{}, args ...interface{}) (*sql.Rows, error) {
 	results, err := e.db.Query(query.(string))
 	return results, err
 }
 
-func (e *EngineDb2) Where(query interface{}, args ...interface{}) *EngStmt {
-
-	s, _ := e.db.Begin()
-
-	return &EngStmt{Tx: s, Query: query, Args: args}
+func (e *EngStmt) Where(query interface{}, args ...interface{}) *EngStmt {
+ 	e.Query = query
+	e.Args = args
+	return e//&EngStmt{Query: query, Args: args}
 }
 func (tx *EngStmt) Get(bean interface{}) (bool, error) {
 	v := reflect.ValueOf(bean).Elem()
@@ -140,17 +154,82 @@ func (tx *EngStmt) Get(bean interface{}) (bool, error) {
 	return true, nil
 }
 
-func (s *EngineDb2) FindOne(links interface{}, querystring string, args ...interface{}) (bool, error) {
+func (s *EngStmt) FindOne(links interface{}, querystring string, args ...interface{}) (bool, error) {
 	has, err := s.Where(querystring, args...).Get(links)
 	return has, err
 }
 
-func (s *EngStmt) Uptade(bean interface{}) (bool, error) {
+func (tx *EngStmt) Uptade(bean interface{}) (bool, error) {
+	fmt.Println("--------------update---------------")
+
+	v := reflect.ValueOf(bean).Elem()
+	t := reflect.TypeOf(bean).Elem()
+
+	tblName := ""
+	if tb, ok := v.Interface().(TableName); ok {
+		tblName = tb.TableName()
+	}
+
+	fmt.Println(tblName)
+	qs := strings.Split(tx.Query.(string), "?")
+	if (len(qs) - 1) != len(tx.Args) {
+		return false, errors.New("参数不匹配")
+	}
+	for i, s := range tx.Args {
+		qs[i] += "'" + reflect.ValueOf(s).String() + "'"
+	}
+	fmt.Println(qs)
+	q := strings.Join(qs, "")
+	///for update
+	SqlUp := "select * from "+ tblName+" where " + q + " for update"
+	fmt.Println(SqlUp)
+	if true {
+		//Sql := `update tbl_user set NAME ='郭靖' where id='2'`
+		_, err := tx.Tx.Exec(SqlUp)
+		if err != nil {
+			fmt.Println(err)
+			return false, err
+		}
+	}
+	///
+	count := v.NumField()
+	ns := []string{}
+	for i := 0; i < count; i++ {
+		k := v.Field(i).Kind()
+		switch k {
+		case reflect.Struct:
+			if t.Field(i).Name == "REC_UPD_TS" {
+				vvv := "(VALUES TIMESTAMP(CURRENT TIMESTAMP))"
+				s := fmt.Sprintf("%s = %s", t.Field(i).Name, vvv)
+				ns = append(ns, s)
+			}
+
+		default:
+			if v.Field(i).String() != "" {
+				s := fmt.Sprintf("%s = '%s'", t.Field(i).Name, v.Field(i).String())
+				ns = append(ns, s)
+			}
+		}
+	}
+
+	Sql := "update " + tblName + " set " + strings.Join(ns, ",") + " where " + q
+	fmt.Println(Sql)
+	//qs := "select * from " + tblName + " where " + tx.Query.(string)
+	//update TBL_MCHT_BIZ_DEAL  set OPER_IN = 'U', REC_UPD_OPR = '1' where   mcht_cd = '999120241110001'
+	if true {
+		//Sql := `update tbl_user set NAME ='郭靖' where id='2'`
+		_, err := tx.Tx.Exec(Sql)
+		if err != nil {
+			fmt.Println(err)
+			return false, err
+		}
+	}
 
 	return true, nil
 }
 
-func (s *EngineDb2) Insert(bean interface{}) (bool, error) {
+
+func (s *EngStmt) Insert(bean interface{}) (bool, error) {
 	v := reflect.ValueOf(bean).Elem()
 	t := reflect.TypeOf(bean).Elem()
 	tblName := ""
@@ -166,12 +245,16 @@ func (s *EngineDb2) Insert(bean interface{}) (bool, error) {
 		k := v.Field(i).Kind()
 		switch k {
 		case reflect.Struct:
+			/*
 			//fmt.Println(k, t.Field(i).Name, v.Field(i).Elem())
 			vv := fmt.Sprintf("%v",v.Field(i))
 			//fmt.Println(k, t.Field(i).Name, v.Field(i).String(),vv)
 			//fmt.Println(strings.Split(vv," +")[0])
 			vvv := strings.Split(vv," +")[0]
 			nv = append(nv, "'"+vvv+"'")
+			*/
+			vvv := "(VALUES TIMESTAMP(CURRENT TIMESTAMP))"
+			nv = append(nv, vvv)
 		default:
 			nv = append(nv, "'"+v.Field(i).String()+"'")
 		}
@@ -187,7 +270,7 @@ func (s *EngineDb2) Insert(bean interface{}) (bool, error) {
 	//fmt.Println(Sql)
 	//Sql := `INSERT INTO tbl_user(ID, NAME) values('5', '国境')`
 	if true {
-		_, err := s.db.Exec(Sql)
+		_, err := s.Tx.Exec(Sql)
 		if err != nil {
 			fmt.Println(err)
 			return false, err
