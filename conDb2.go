@@ -212,27 +212,30 @@ func main() {
 	//conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.12; PORT=56000; PROTOCOL=TCPIP;  UID=db2inst1; PWD=db2inst1;"
 	conStr := "DATABASE=rcbank; HOSTNAME=192.168.20.78; PORT=56000; PROTOCOL=TCPIP; CurrentSchema=APSTFR;  UID=apstfr; PWD=apstfr;"
 
-	if false {
+	if true {
 		db, err := sql.Open("db2-cli", conStr)
 		if err != nil {
 			fmt.Println("open->", err)
 			return
 		}
 		defer db.Close()
-
-		st, err := db.Begin()
-		if err != nil {
-			fmt.Println("Begin->", err)
-			return
-		}
-		defer st.Commit()
+		//st, err := db.Begin()
+		//if err != nil {
+		//	fmt.Println("Begin->", err)
+		//	return
+		//}
+		//defer st.Commit()
+		MaxConnect(db)
 		//SETSchema(st, "gft")
 		//Query(st)
 		//Update(st)
 		QueryRow(st, "99991002   ")
+		for  {
+			time.Sleep(5*time.Second)
+		}
 	}
 	//查询
-	if true {
+	if false {
 		err := godb2.InitModel()
 		if err != nil {
 			fmt.Println("InitModel->", err)
@@ -347,17 +350,15 @@ func MaxConnect(db *sql.DB) {
 			fmt.Println("recover:", r)
 		}
 	}()
-	//db.SetMaxOpenConns(15)
-	db.SetMaxIdleConns(15)
-	for i := 0; i < 17; i++ {
-		st, err := db.Begin()
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(10)
+	for i := 0; i < 10; i++ {
+		_, err := db.Begin()
 		if err != nil {
 			fmt.Println("Begin->", err)
 			return
 		}
 		fmt.Println(i)
-		if i <= 2 {
-			st.Rollback()
-		}
+		//st.Rollback()
 	}
 }

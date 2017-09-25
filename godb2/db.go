@@ -2,6 +2,7 @@ package godb2
 
 import (
 	"database/sql"
+	_ "bitbucket.org/phiggins/db2cli"
 	"fmt"
 	"github.com/pkg/errors"
 	"github.com/widuu/goini"
@@ -9,6 +10,10 @@ import (
 	"github.com/axgle/mahonia"
 	"strconv"
 	"strings"
+	"sync"
+	"golib/modules/logr"
+	"time"
+	"golib/modules/config"
 )
 
 type EngineDb2 struct {
@@ -16,6 +21,7 @@ type EngineDb2 struct {
 }
 
 type EngStmt struct {
+	sync.Locker
 	Tx        *sql.Tx
 	Query     interface{}
 	Args      []interface{}
@@ -25,42 +31,70 @@ type EngStmt struct {
 type levelmap map[int]map[string]map[string]string
 
 func opendb(file string) (*EngineDb2, error) {
-	//talkChan := loadConfig(file)
-	//dbdata := make(map[string]string)
-	//
-	//dbdata["DATABASE"] = talkChan[0]["db"]["DATABASE"]
-	//dbdata["HOSTNAME"] = talkChan[0]["db"]["HOSTNAME"]
-	//dbdata["PORT"] = talkChan[0]["db"]["PORT"]
-	//dbdata["UID"] = talkChan[0]["db"]["UID"]
-	//dbdata["PWD"] = talkChan[0]["db"]["PWD"]
-	//dbdata["idlcon"] = talkChan[0]["db"]["idlcon"]
-	//dbdata["maxcon"] = talkChan[0]["db"]["maxcon"]
-	//CurrentSchema=GUFT;
-	//conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.12; PORT=56000; PROTOCOL=TCPIP; UID=db2inst1; PWD=db2inst1;"
-	conStr := "DATABASE=rcbank; HOSTNAME=192.168.20.78; PORT=56000; PROTOCOL=TCPIP; CurrentSchema=APSTFR;  UID=apstfr; PWD=apstfr;"
+	talkChan := loadConfig(file)
+	dbdata := make(map[string]string)
 
+	dbdata["DATABASE"] = talkChan[0]["db"]["DATABASE"]
+	dbdata["HOSTNAME"] = talkChan[0]["db"]["HOSTNAME"]
+	dbdata["PORT"] = talkChan[0]["db"]["PORT"]
+	dbdata["UID"] = talkChan[0]["db"]["UID"]
+	dbdata["PWD"] = talkChan[0]["db"]["PWD"]
+	dbdata["CurrentSchema"] = talkChan[0]["db"]["CurrentSchema"]
+	dbdata["idlcon"] = talkChan[0]["db"]["idlcon"]
+	dbdata["maxcon"] = talkChan[0]["db"]["maxcon"]
+	conStr := "DATABASE=" + dbdata["DATABASE"] + "; HOSTNAME=" + dbdata["HOSTNAME"] + "; PORT=" + dbdata["PORT"] + "; PROTOCOL=TCPIP; " + "CurrentSchema=" + dbdata["CurrentSchema"] + "; UID=" + dbdata["UID"] + "; PWD=" + dbdata["PWD"] + ";"
+	//conStr := "DATABASE=rcbank; HOSTNAME=192.168.20.78; PORT=56000; PROTOCOL=TCPIP; CurrentSchema=APSTFR;  UID=apstfr; PWD=apstfr;"
+	fmt.Println(conStr)
 	d, err := sql.Open("db2-cli", conStr)
 	if err != nil {
 		fmt.Println("open->", err)
 		return nil, errors.New("open db2 failed:" + conStr)
 	}
+	idlCon, err := strconv.Atoi(dbdata["idlcon"])
+	if err != nil || idlCon <= 0 {
+		fmt.Println("空闲连接默认10")
+		idlCon = 10
+	}
+
+	maxCon, err := strconv.Atoi(dbdata["maxcon"])
+	if err != nil || maxCon <= 0 {
+		fmt.Println("最大连接默认100")
+		maxCon = 100
+	}
+	d.Ping()
+	d.SetMaxIdleConns(idlCon)
+	d.SetMaxOpenConns(maxCon)
 	return &EngineDb2{db: d}, nil
 }
 
-func (e *EngineDb2) SETSchema(schema string) error {
+func (tx *EngStmt) SETSchema(schema string) error {
 	Sql := `set current  schema  = ` + schema
-	_, err := e.db.Exec(Sql)
+	_, err := tx.Tx.Exec(Sql)
 	if err != nil {
 		return err
 	}
 	return nil
 }
+func (tx *EngStmt) GetCurrentSchema() (sc string) {
+	Sql := `select  current  schema from sysibm.dual`
+	row := tx.Tx.QueryRow(Sql)
+	row.Scan(&sc)
+	return
+}
+func (tx *EngStmt) HasSchema(tblName string) (bool, []string) {
+	nl := strings.Split(tblName, ".")
+	if len(nl) == 2 {
+		return true, nl
+	}
+	return false, nl
+}
+
 func (e *EngineDb2) Begin() (*EngStmt, error) {
 	s, err := e.db.Begin()
 	return &EngStmt{Tx: s}, err
 }
 func (e *EngineDb2) Close() error {
-	return   e.db.Close()
+	return e.db.Close()
 }
 func (tx *EngStmt) Commit() error {
 	return tx.Tx.Commit()
@@ -75,10 +109,18 @@ func (e *EngineDb2) Query(query interface{}, args ...interface{}) (*sql.Rows, er
 	return results, err
 }
 
-func (e *EngStmt) Where(query interface{}, args ...interface{}) *EngStmt {
- 	e.Query = query
-	e.Args = args
-	return e//&EngStmt{Query: query, Args: args}
+func (e *EngineDb2) QueryRow(query interface{}, args ...interface{}) (*sql.Row) {
+	results := e.db.QueryRow(query.(string))
+	return results
+}
+func (tx *EngStmt) QueryRow(query interface{}, args ...interface{}) (*sql.Row) {
+	results := tx.Tx.QueryRow(query.(string))
+	return results
+}
+func (tx *EngStmt) Where(query interface{}, args ...interface{}) *EngStmt {
+	tx.Query = query
+	tx.Args = args
+	return tx //&EngStmt{Query: query, Args: args}
 }
 func (tx *EngStmt) Get(bean interface{}) (bool, error) {
 	v := reflect.ValueOf(bean).Elem()
@@ -181,7 +223,7 @@ func (tx *EngStmt) Uptade(bean interface{}) (bool, error) {
 	fmt.Println(qs)
 	q := strings.Join(qs, "")
 	///for update
-	SqlUp := "select * from "+ tblName+" where " + q + " for update"
+	SqlUp := "select * from " + tblName + " where " + q + " for update"
 	fmt.Println(SqlUp)
 	if true {
 		//Sql := `update tbl_user set NAME ='郭靖' where id='2'`
@@ -228,13 +270,23 @@ func (tx *EngStmt) Uptade(bean interface{}) (bool, error) {
 	return true, nil
 }
 
-
 func (s *EngStmt) Insert(bean interface{}) (bool, error) {
+
 	v := reflect.ValueOf(bean).Elem()
 	t := reflect.TypeOf(bean).Elem()
 	tblName := ""
+	crtSchema := s.GetCurrentSchema()
+	defer s.SETSchema(crtSchema)
+
 	if tb, ok := v.Interface().(TableName); ok {
 		tblName = tb.TableName()
+	}
+	//fmt.Println(tblName,crtSchema)
+	if h, n := s.HasSchema(tblName); h {
+		//defer s.Unlock()
+		tblName = n[1]
+		//s.Lock()
+		s.SETSchema(n[0])
 	}
 	count := v.NumField()
 	//fmt.Println(count)
@@ -244,6 +296,9 @@ func (s *EngStmt) Insert(bean interface{}) (bool, error) {
 		ns = append(ns, t.Field(i).Name)
 		k := v.Field(i).Kind()
 		switch k {
+		case reflect.Int,reflect.Int64, reflect.Float64:
+			vv := fmt.Sprintf("%v", v.Field(i).Interface())
+			nv = append(nv, vv)
 		case reflect.Struct:
 			/*
 			//fmt.Println(k, t.Field(i).Name, v.Field(i).Elem())
@@ -253,8 +308,14 @@ func (s *EngStmt) Insert(bean interface{}) (bool, error) {
 			vvv := strings.Split(vv," +")[0]
 			nv = append(nv, "'"+vvv+"'")
 			*/
-			vvv := "(VALUES TIMESTAMP(CURRENT TIMESTAMP))"
-			nv = append(nv, vvv)
+			if t.Field(i).Name == "REC_UPD_TS" ||t.Field(i).Name == "REC_CRT_TS" {
+				vvv := "(VALUES TIMESTAMP(CURRENT TIMESTAMP))"
+				nv = append(nv, vvv)
+			}else {
+				vvv := "(select current date from sysibm.sysdummy1)"
+				nv = append(nv, vvv)
+			}
+
 		default:
 			nv = append(nv, "'"+v.Field(i).String()+"'")
 		}
@@ -264,10 +325,10 @@ func (s *EngStmt) Insert(bean interface{}) (bool, error) {
 	sv := " VALUES (" + strings.Join(nv, ", ") + ")"
 	//fmt.Println(su)
 	//fmt.Println(nv)
-	fmt.Println(sv)
+	//fmt.Println(sv)
 
 	Sql := `INSERT INTO ` + su + sv //+" VALUES (" + ")"
-	//fmt.Println(Sql)
+	fmt.Println(Sql)
 	//Sql := `INSERT INTO tbl_user(ID, NAME) values('5', '国境')`
 	if true {
 		_, err := s.Tx.Exec(Sql)
@@ -281,18 +342,14 @@ func (s *EngStmt) Insert(bean interface{}) (bool, error) {
 }
 
 func GetInstance() *EngineDb2 {
-	//err := instance.db.Ping()
-	//for err != nil {
-	//	fmt.Printf("-->",err)
-	//}
-	//dbconf := config.StringDefault("dbconf", "")
-	//
-	//for err != nil {
-	//	logr.Error("数据库连接已经断开，重新连接", err)
-	//	instance, err = opendb(dbconf)
-	//	time.Sleep(time.Duration(5) * time.Second)
-	//}
-	//fmt.Printf("instance")
+	err := instance.db.Ping()
+
+	dbconf := config.StringDefault("dbconf", "")
+	for err != nil {
+		logr.Error("数据库连接已经断开，重新连接", err)
+		instance, err = opendb(dbconf)
+		time.Sleep(time.Duration(5) * time.Second)
+	}
 	return instance
 }
 

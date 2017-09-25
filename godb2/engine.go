@@ -1,7 +1,8 @@
 package godb2
 
 import (
-	//"golib/modules/config"
+	"golib/modules/config"
+	"errors"
 )
 
 var instance *EngineDb2
@@ -14,13 +15,12 @@ func InitModel() error {
 }
 
 func initDb() (*EngineDb2, error) {
-	//dbconf := config.StringDefault("dbconf", "")
-	//if dbconf == "" {
-	//	return nil, errors.New("数据库配置文件为空"+dbconf)
-	//}
+	dbconf := config.StringDefault("dbconf", "")
+	if dbconf == "" {
+		return nil, errors.New("数据库配置文件为空"+dbconf)
+	}
 
-	//db, err := opendb(dbconf)
-	db, err := opendb("")
+	db, err := opendb(dbconf)
 	if err != nil {
 		return nil, err
 	}
