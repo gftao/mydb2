@@ -14,6 +14,8 @@ import (
 	"golib/modules/logr"
 	"time"
 	"golib/modules/config"
+	"github.com/jinzhu/copier"
+	"runtime"
 )
 
 type EngineDb2 struct {
@@ -23,7 +25,7 @@ type EngineDb2 struct {
 type EngStmt struct {
 	sync.Locker
 	Tx        *sql.Tx
-	Query     interface{}
+	query     interface{}
 	Args      []interface{}
 	tableName string
 }
@@ -33,15 +35,14 @@ type levelmap map[int]map[string]map[string]string
 func opendb(file string) (*EngineDb2, error) {
 	talkChan := loadConfig(file)
 	dbdata := make(map[string]string)
-
-	dbdata["DATABASE"] = talkChan[0]["db"]["DATABASE"]
-	dbdata["HOSTNAME"] = talkChan[0]["db"]["HOSTNAME"]
-	dbdata["PORT"] = talkChan[0]["db"]["PORT"]
-	dbdata["UID"] = talkChan[0]["db"]["UID"]
-	dbdata["PWD"] = talkChan[0]["db"]["PWD"]
-	dbdata["CurrentSchema"] = talkChan[0]["db"]["CurrentSchema"]
-	dbdata["idlcon"] = talkChan[0]["db"]["idlcon"]
-	dbdata["maxcon"] = talkChan[0]["db"]["maxcon"]
+ 	for t := range talkChan {
+		for k := range talkChan[t] {
+			switch k {
+			case "db2":
+				dbdata = talkChan[t][k]
+			}
+		}
+	}
 	conStr := "DATABASE=" + dbdata["DATABASE"] + "; HOSTNAME=" + dbdata["HOSTNAME"] + "; PORT=" + dbdata["PORT"] + "; PROTOCOL=TCPIP; " + "CurrentSchema=" + dbdata["CurrentSchema"] + "; UID=" + dbdata["UID"] + "; PWD=" + dbdata["PWD"] + ";"
 	//conStr := "DATABASE=rcbank; HOSTNAME=192.168.20.78; PORT=56000; PROTOCOL=TCPIP; CurrentSchema=APSTFR;  UID=apstfr; PWD=apstfr;"
 	fmt.Println(conStr)
@@ -75,6 +76,15 @@ func (tx *EngStmt) SETSchema(schema string) error {
 	}
 	return nil
 }
+
+func (tx *EngStmt) Exec(query string, args ...interface{}) error {
+	_, err := tx.Tx.Exec(query, args ...)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (tx *EngStmt) GetCurrentSchema() (sc string) {
 	Sql := `select  current  schema from sysibm.dual`
 	row := tx.Tx.QueryRow(Sql)
@@ -105,94 +115,203 @@ func (tx *EngStmt) Rollback() error {
 }
 
 func (e *EngineDb2) Query(query interface{}, args ...interface{}) (*sql.Rows, error) {
-	results, err := e.db.Query(query.(string))
+	results, err := e.db.Query(query.(string), args...)
 	return results, err
 }
 
 func (e *EngineDb2) QueryRow(query interface{}, args ...interface{}) (*sql.Row) {
-	results := e.db.QueryRow(query.(string))
+	results := e.db.QueryRow(query.(string), args...)
 	return results
 }
 func (tx *EngStmt) QueryRow(query interface{}, args ...interface{}) (*sql.Row) {
-	results := tx.Tx.QueryRow(query.(string))
+	results := tx.Tx.QueryRow(query.(string), args...)
 	return results
 }
+
+func (tx *EngStmt) Query(query interface{}, args ...interface{}) (*sql.Rows, error) {
+	results, err := tx.Tx.Query(query.(string), args...)
+	return results, err
+}
+
+func (tx *EngStmt) CheckExit(query interface{}, args ...interface{}) (bool, error) {
+	rows, err := tx.Tx.Query(query.(string), args...)
+	if rows.Next() {
+		return true, err
+	}
+	return false, err
+}
+
 func (tx *EngStmt) Where(query interface{}, args ...interface{}) *EngStmt {
-	tx.Query = query
+	tx.query = query
 	tx.Args = args
 	return tx //&EngStmt{Query: query, Args: args}
 }
-func (tx *EngStmt) Get(bean interface{}) (bool, error) {
+
+func (tx *EngStmt) Get(bean interface{}) (b bool, e error) {
+	defer func() {
+		if r := recover(); r != nil {
+			e = fmt.Errorf("%v", r)
+			b = false
+		}
+	}()
+
 	v := reflect.ValueOf(bean).Elem()
 	t := reflect.TypeOf(bean).Elem()
+	if !v.CanAddr() {
+		return false, errors.New("copy to value is unaddressable")
+	}
 	if tb, ok := v.Interface().(TableName); ok {
 		tx.tableName = tb.TableName()
 	}
-	qs := "select * from " + tx.tableName + " where " + tx.Query.(string)
-	fmt.Println(qs)
-	fmt.Println(tx.Args)
+	qs := "select * from " + tx.tableName + " where " + tx.query.(string)
+	//fmt.Println(qs, tx.Args)
 	rows, err := tx.Tx.Query(qs, tx.Args...)
-	//fmt.Println("---------")
 	if err != nil {
-		//fmt.Println(err)
 		return false, err
 	}
-	count := v.NumField()
-	fmt.Println(count)
-
-	if true {
-		for rows.Next() {
-			id := make([]interface{}, count)
-			for j := 0; j < count; j++ {
-				k := v.Field(j).Kind()
-				switch k {
-				case reflect.Int:
-					id[j] = 0
-				case reflect.String:
-					id[j] = ""
-				case reflect.Struct:
-					id[j] = reflect.New(reflect.TypeOf(reflect.Struct))
-				default:
-					fmt.Println("init type->", t.Field(j).Name, k)
-					id[j] = ""
-				}
-			}
-			//fmt.Printf("id->%+v", id)
-			it := make([]interface{}, count)
-			for j := 0; j < count; j++ {
-				it[j] = &id[j]
-			}
-			err = rows.Scan(it...)
-			if err != nil {
-				panic(err)
-			}
-			dec := mahonia.NewDecoder("gbk")
-			for j := 0; j < count; j++ {
-				k := reflect.ValueOf(id[j]).Kind()
-				//fmt.Println("----String--1---", id[j])
-				switch k {
-				case reflect.Int, reflect.Int32:
-					str := strconv.FormatInt(reflect.ValueOf(id[j]).Int(), 10)
-					i, _ := strconv.Atoi(str)
-					v.Field(j).Set(reflect.ValueOf(i))
-				case reflect.String:
-					v.Field(j).Set(reflect.ValueOf(id[j]))
-				case reflect.Slice:
-					data := reflect.ValueOf(id[j]).Interface().([]byte)
-					str := string(data)
+	count := t.NumField()
+	//fmt.Println(count)
+	ci := 0
+	for rows.Next() {
+		ci ++
+		id := make([]interface{}, count)
+		it := make([]interface{}, count)
+		for j := 0; j < count; j++ {
+			k := v.Field(j).Type()
+			id[j] = reflect.New(k)
+			it[j] = &id[j]
+		}
+		err = rows.Scan(it...)
+		if err != nil {
+			return false, err
+		}
+		dec := mahonia.NewDecoder("gbk")
+		for j := 0; j < count; j++ {
+			//k := reflect.ValueOf(id[j]).Kind()
+			k := v.Field(j).Kind()
+			//fmt.Printf("%v->%s\n", k, t.Field(j).Name)
+			switch k {
+			case reflect.Int, reflect.Int32, reflect.Int64:
+				//str := strconv.FormatInt(reflect.ValueOf(id[j]).Int(), 10)
+				//i, _ := strconv.Atoi(str)
+				//v.Field(j).Set(reflect.ValueOf(i))
+				v.Field(j).Set(reflect.ValueOf(id[j]))
+			case reflect.String:
+				data := reflect.ValueOf(id[j]).Interface().([]byte)
+				str := string(data)
+				if runtime.GOOS == "windows" {
 					r := dec.ConvertString(str)
-					//fmt.Println("----String--2---", r)
 					v.Field(j).Set(reflect.ValueOf(r))
-				case reflect.Struct:
-					v.Field(j).Set(reflect.ValueOf(id[j]))
-				default:
-					//reflect.Copy(v.Field(j),reflect.ValueOf(id[j]))
-					fmt.Println("----default----", reflect.TypeOf(id[j]).Kind(), id[j])
+				} else {
+					v.Field(j).Set(reflect.ValueOf(str))
 				}
-				//v.Field(j).Set(reflect.ValueOf(r))
+				//fmt.Println(r)
+
+			case reflect.Slice:
+				data := reflect.ValueOf(id[j]).Interface().([]byte)
+				str := string(data)
+				r := dec.ConvertString(str)
+				//fmt.Println(r)
+				v.Field(j).Set(reflect.ValueOf(r))
+			case reflect.Struct:
+				v.Field(j).Set(reflect.ValueOf(id[j]))
+			case reflect.Float64:
+				v.Field(j).Set(reflect.ValueOf(id[j]))
+			default:
+				v.Field(j).Set(reflect.ValueOf(id[j]))
+				//reflect.Copy(v.Field(j),reflect.ValueOf(id[j]))
+				fmt.Println("----default----", reflect.TypeOf(id[j]).Kind(), id[j])
 			}
+			//v.Field(j).Set(reflect.ValueOf(r))
 		}
 	}
+	//fmt.Println(ci)
+	if ci == 0 {
+		return true, ErrRecordNotFound
+	}
+	return true, nil
+}
+
+func (tx *EngStmt) GetAll(rowsSlicePtr interface{}) (b bool, e error) {
+	defer func() {
+		if r := recover(); r != nil {
+			e = fmt.Errorf("%v", r)
+			b = false
+		}
+	}()
+	sliceValue := reflect.Indirect(reflect.ValueOf(rowsSlicePtr))
+	//fmt.Printf("%+v\n", sliceValue)
+	if sliceValue.Kind() != reflect.Slice {
+		return false, errors.New("needs a pointer to a slice")
+	}
+	sliceElementType := sliceValue.Type().Elem()
+	beans := reflect.MakeSlice(reflect.SliceOf(sliceElementType), 0, 4)
+	bean := reflect.New(sliceElementType)
+	v := reflect.Indirect(bean)
+	if tb, ok := bean.Interface().(TableName); ok {
+		tx.tableName = tb.TableName()
+	}
+	qs := "select * from " + tx.tableName + " where " + tx.query.(string)
+	//fmt.Println(qs, tx.Args)
+	rows, err := tx.Tx.Query(qs, tx.Args...)
+	if err != nil {
+		return false, err
+	}
+	count := sliceElementType.NumField()
+
+	id := make([]interface{}, count)
+	it := make([]interface{}, count)
+	for j := 0; j < count; j++ {
+		k := v.Field(j).Type()
+		id[j] = reflect.New(k)
+		it[j] = &id[j]
+	}
+	ci := 0
+	for rows.Next() {
+		ci ++
+		if ci == 1000 {
+			break
+		}
+		err = rows.Scan(it...)
+		if err != nil {
+			return false, err
+		}
+		dec := mahonia.NewDecoder("gbk")
+		for j := 0; j < count; j++ {
+			k := v.Field(j).Kind()
+			switch k {
+			case reflect.Int, reflect.Int32:
+				str := strconv.FormatInt(reflect.ValueOf(id[j]).Int(), 10)
+				i, _ := strconv.Atoi(str)
+				v.Field(j).Set(reflect.ValueOf(i))
+			case reflect.String:
+				data := reflect.ValueOf(id[j]).Interface().([]byte)
+				str := string(data)
+				if runtime.GOOS == "windows" {
+					r := dec.ConvertString(str)
+					v.Field(j).Set(reflect.ValueOf(r))
+				} else {
+					v.Field(j).Set(reflect.ValueOf(str))
+				}
+			case reflect.Slice:
+				data := reflect.ValueOf(id[j]).Interface().([]byte)
+				str := string(data)
+				r := dec.ConvertString(str)
+				v.Field(j).Set(reflect.ValueOf(r))
+			case reflect.Struct:
+				v.Field(j).Set(reflect.ValueOf(id[j]))
+			default:
+				v.Field(j).Set(reflect.ValueOf(id[j]))
+				fmt.Println("----default----", reflect.TypeOf(id[j]).Kind(), id[j])
+			}
+
+		}
+		beans = reflect.Append(beans, v)
+	}
+	if ci == 0 {
+		return true, ErrRecordNotFound
+	}
+	copier.Copy(rowsSlicePtr, beans.Interface())
 	return true, nil
 }
 
@@ -202,7 +321,6 @@ func (s *EngStmt) FindOne(links interface{}, querystring string, args ...interfa
 }
 
 func (tx *EngStmt) Uptade(bean interface{}) (bool, error) {
-	fmt.Println("--------------update---------------")
 
 	v := reflect.ValueOf(bean).Elem()
 	t := reflect.TypeOf(bean).Elem()
@@ -211,25 +329,27 @@ func (tx *EngStmt) Uptade(bean interface{}) (bool, error) {
 	if tb, ok := v.Interface().(TableName); ok {
 		tblName = tb.TableName()
 	}
-
-	fmt.Println(tblName)
-	qs := strings.Split(tx.Query.(string), "?")
+	//fmt.Println(tblName)
+	qs := strings.Split(tx.query.(string), "?")
 	if (len(qs) - 1) != len(tx.Args) {
 		return false, errors.New("参数不匹配")
 	}
 	for i, s := range tx.Args {
 		qs[i] += "'" + reflect.ValueOf(s).String() + "'"
 	}
-	fmt.Println(qs)
+	//fmt.Println(qs)
 	q := strings.Join(qs, "")
 	///for update
-	SqlUp := "select * from " + tblName + " where " + q + " for update"
-	fmt.Println(SqlUp)
 	if true {
-		//Sql := `update tbl_user set NAME ='郭靖' where id='2'`
-		_, err := tx.Tx.Exec(SqlUp)
+		SqlUp := "select * from " + tblName + " where " + q + " for update"
+		//fmt.Println(SqlUp)
+		r, err := tx.Tx.Exec(SqlUp)
 		if err != nil {
 			fmt.Println(err)
+			return false, err
+		}
+		i, err := r.RowsAffected()
+		if i == 0 {
 			return false, err
 		}
 	}
@@ -245,26 +365,34 @@ func (tx *EngStmt) Uptade(bean interface{}) (bool, error) {
 				s := fmt.Sprintf("%s = %s", t.Field(i).Name, vvv)
 				ns = append(ns, s)
 			}
-
+		case reflect.Int, reflect.Int64, reflect.Float64:
+			vv := fmt.Sprintf("%s = %d", t.Field(i).Name, v.Field(i).Interface())
+			ns = append(ns, vv)
 		default:
 			if v.Field(i).String() != "" {
-				s := fmt.Sprintf("%s = '%s'", t.Field(i).Name, v.Field(i).String())
-				ns = append(ns, s)
+				vs := ""
+				if strings.Contains(v.Field(i).String(), "'") {
+					s := strings.Replace(v.Field(i).String(), "'", `''`, -1)
+					vs = fmt.Sprintf("%s = '%s'", t.Field(i).Name, s)
+
+				} else {
+					vs = fmt.Sprintf("%s = '%s'", t.Field(i).Name, v.Field(i).String())
+				}
+				ns = append(ns, vs)
 			}
 		}
 	}
 
 	Sql := "update " + tblName + " set " + strings.Join(ns, ",") + " where " + q
-	fmt.Println(Sql)
-	//qs := "select * from " + tblName + " where " + tx.Query.(string)
-	//update TBL_MCHT_BIZ_DEAL  set OPER_IN = 'U', REC_UPD_OPR = '1' where   mcht_cd = '999120241110001'
-	if true {
-		//Sql := `update tbl_user set NAME ='郭靖' where id='2'`
-		_, err := tx.Tx.Exec(Sql)
-		if err != nil {
-			fmt.Println(err)
-			return false, err
-		}
+	//fmt.Println(Sql)
+	r, err := tx.Tx.Exec(Sql)
+	if err != nil {
+		//fmt.Println(err)
+		return false, err
+	}
+	i, err := r.RowsAffected()
+	if i == 0 {
+		return false, err
 	}
 
 	return true, nil
@@ -296,7 +424,7 @@ func (s *EngStmt) Insert(bean interface{}) (bool, error) {
 		ns = append(ns, t.Field(i).Name)
 		k := v.Field(i).Kind()
 		switch k {
-		case reflect.Int,reflect.Int64, reflect.Float64:
+		case reflect.Int, reflect.Int64, reflect.Float64:
 			vv := fmt.Sprintf("%v", v.Field(i).Interface())
 			nv = append(nv, vv)
 		case reflect.Struct:
@@ -308,34 +436,34 @@ func (s *EngStmt) Insert(bean interface{}) (bool, error) {
 			vvv := strings.Split(vv," +")[0]
 			nv = append(nv, "'"+vvv+"'")
 			*/
-			if t.Field(i).Name == "REC_UPD_TS" ||t.Field(i).Name == "REC_CRT_TS" {
+			if t.Field(i).Name == "REC_UPD_TS" || t.Field(i).Name == "REC_CRT_TS" {
 				vvv := "(VALUES TIMESTAMP(CURRENT TIMESTAMP))"
 				nv = append(nv, vvv)
-			}else {
+			} else {
 				vvv := "(select current date from sysibm.sysdummy1)"
 				nv = append(nv, vvv)
 			}
 
 		default:
-			nv = append(nv, "'"+v.Field(i).String()+"'")
+			if strings.Contains(v.Field(i).String(), "'") {
+				vs := strings.Replace(v.Field(i).String(), "'", `''`, -1)
+				//fmt.Println(vs)
+				nv = append(nv, "'"+vs+" '")
+
+			} else {
+				nv = append(nv, "'"+v.Field(i).String()+"'")
+			}
 		}
 
 	}
 	su := tblName + " (" + strings.Join(ns, ", ") + ")"
 	sv := " VALUES (" + strings.Join(nv, ", ") + ")"
-	//fmt.Println(su)
-	//fmt.Println(nv)
-	//fmt.Println(sv)
-
 	Sql := `INSERT INTO ` + su + sv //+" VALUES (" + ")"
-	fmt.Println(Sql)
-	//Sql := `INSERT INTO tbl_user(ID, NAME) values('5', '国境')`
-	if true {
-		_, err := s.Tx.Exec(Sql)
-		if err != nil {
-			fmt.Println(err)
-			return false, err
-		}
+	//fmt.Println(Sql)
+	_, err := s.Tx.Exec(Sql)
+	if err != nil {
+		fmt.Println(err)
+		return false, err
 	}
 
 	return true, nil

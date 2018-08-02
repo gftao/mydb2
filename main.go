@@ -6,6 +6,8 @@ import (
 	"os"
 	"golib/modules/config"
 	"ConDB2/godb2"
+	"golib/modules/logr"
+	"ConDB2/modules"
 )
 
 var confFile = flag.String("confFile", "./etc/ConDB2.ini", "配置文件")
@@ -13,6 +15,7 @@ var confFile = flag.String("confFile", "./etc/ConDB2.ini", "配置文件")
 func main() {
 	flag.Parse()
 
+	flag.Parse()
 	if *confFile == "" {
 		fmt.Println("配置文件不存在", *confFile)
 		flag.Usage()
@@ -22,6 +25,13 @@ func main() {
 	if err != nil {
 		fmt.Println("加载配置文件失败", err)
 		os.Exit(-1)
+	}
+	//初始化日志
+	fmt.Println("开始初始化日志")
+	err = logr.InitModules()
+	if err != nil {
+		fmt.Println("初始化日志失败", err)
+		return
 	}
 	fmt.Println("开始初始化数据库")
 	/////////db2
@@ -35,21 +45,15 @@ func main() {
 	if err != nil {
 		fmt.Println("获取DB事物失败:", err)
 	}
-	//row:= tx.QueryRow("VALUES NEXTVAL FOR SEQ_IND")
-	row:= tx.QueryRow("VALUES PREVVAL FOR SEQ_IND")
-	v:=""
+	//ok, err := tx.Where("STATE = ?", "1").GetAll(&MCHT_SYNC)
+	MCHT_INF := &modules.TBL_MCHT_INF{}
+	ok, err := tx.Where("MCHT_CD = ? ", "").Get(MCHT_INF)
+	if err != nil || !ok {
+		tx.Rollback()
+		fmt.Errorf("更新商户信息表失败:%v,%s", ok, err)
+		return
+	}
+	tx.Commit()
 
-	row.Scan(&v)
-	fmt.Println("-->",v)
-	//tb := &modules.TBL_MCHT_INF{}
-	//ok, err := tx.Where("", "").Get(tb)
-	//if err != nil {
-	//	fmt.Println("Where->", err)
-	//	return
-	//}
-	//if ok {
-	//	fmt.Println("not find")
-	//	tx.Rollback()
-	//	return
-	//}
+
 }

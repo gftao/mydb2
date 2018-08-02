@@ -6,17 +6,20 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+	"errors"
 )
 
 var (
 	c_TIME_DEFAULT time.Time
 	TimeType       = reflect.TypeOf(c_TIME_DEFAULT)
+	ErrRecordNotFound = errors.New("record not found")
 )
 
 
 type TableName interface {
 	TableName() string
 }
+
 
 
 

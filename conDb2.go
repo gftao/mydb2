@@ -210,7 +210,7 @@ func main() {
 	//conStr := "DATABASE=center; HOSTNAME=192.168.127.21; PORT=50000;PROTOCOL=TCPIP;CurrentSchema=GUFT;  UID=guft; PWD=gft;"
 	//conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.74; PORT=56000; PROTOCOL=TCPIP;CurrentSchema=TEST; UID=db2inst1; PWD=db2inst1;"
 	//conStr := "DATABASE=rcbank;  HOSTNAME=192.168.20.12; PORT=56000; PROTOCOL=TCPIP;  UID=db2inst1; PWD=db2inst1;"
-	conStr := "DATABASE=rcbank; HOSTNAME=192.168.20.78; PORT=56000; PROTOCOL=TCPIP; CurrentSchema=APSTFR;  UID=apstfr; PWD=apstfr;"
+	conStr := "DATABASE=rcbank; HOSTNAME=192.168.20.78; PORT=56000; PROTOCOL=TCPIP; CurrentSchema=apsmgm;  UID=apstfr; PWD=apstfr;"
 
 	if true {
 		db, err := sql.Open("db2-cli", conStr)
@@ -224,15 +224,87 @@ func main() {
 		//	fmt.Println("Begin->", err)
 		//	return
 		//}
+		st, err := db.Prepare("select MCHT_CD from TBL_MCHT_INF")
+		if err != nil {
+			fmt.Println("st.Query-->", err)
+		}
+
+		rows, err := st.Query()
+		if err != nil {
+			fmt.Println("st.Query-->", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			mc :=""
+			rows.Scan(&mc)
+			fmt.Println(mc)
+		}
+
+		//count := 59
+		//mc:= &modules.TBL_MCHT_INF{}
+		//v := reflect.ValueOf(mc).Elem()
+		//
+		//for rows.Next() {
+		//
+		//	id := make([]interface{}, count)
+		//	it := make([]interface{}, count)
+		//	for j := 0; j < count; j++ {
+		//		k := v.Field(j).Type()
+		//		id[j] = reflect.New(k)
+		//		it[j] = &id[j]
+		//	}
+		//	err = rows.Scan(it...)
+		//
+		//	if err != nil {
+		//		fmt.Println("st1->Query-->", err)
+		//	}
+		//	fmt.Println(it)
+		//	fmt.Println("st2Query-->", rows.Err())
+		//}
+		//fmt.Println("st3Query-->", rows.Err())
 		//defer st.Commit()
-		MaxConnect(db)
+		//rows, err := st.Query("select * from TBL_MCHT_INF where MCHT_CD = ?", "110170920645418")
+		//rows, err := st.Query("select   COUNT(*)  from TBL_MCHT_INF")
+		//if err != nil {
+		//	fmt.Println("st.Query-->", err)
+		//}
+		//fmt.Println(rows.Columns())
+		//cl,_ := rows.Columns()
+		//l := len(cl)
+		//t, err := rows.ColumnTypes()
+		//if err != nil {
+		//	fmt.Println("st.ColumnTypes-->", err)
+		//}
+		//for i := 0;i < l ; i++  {
+		//	fmt.Println(t[i].Name(),t[i].DatabaseTypeName())
+		//}
+		//ok := rows.Next()
+		//fmt.Println(ok)
+		//c := 0
+		//
+		//for rows.Next() {
+		//	rows.Scan(&c)
+		//	fmt.Println(c)
+		//}
+
+		//c = 0
+		////for ; it > 0; it-- {
+		//	row := st.QueryRow("select * from TBL_MCHT_INF")
+		//	mc := "q"
+		//	row.Scan(&mc)
+		//	fmt.Println("mc: ", mc)
+		//	c ++
+		////}
+
+		//fmt.Println( rst.print())
+		//MaxConnect(db)
 		//SETSchema(st, "gft")
 		//Query(st)
 		//Update(st)
-		QueryRow(st, "99991002   ")
-		for  {
-			time.Sleep(5*time.Second)
-		}
+		//QueryRow(st, "99991002   ")
+		//for {
+		//	time.Sleep(5 * time.Second)
+		//}
 	}
 	//查询
 	if false {
@@ -244,7 +316,7 @@ func main() {
 		fmt.Println("--------find---------")
 		e := godb2.GetInstance()
 		defer e.Close()
-		engine ,err := e.Begin()
+		engine, err := e.Begin()
 		//engine.SETSchema("gft")
 		if err != nil {
 			fmt.Println("Begin->", err)
@@ -304,8 +376,8 @@ func main() {
 		}
 		//========================
 		//==========Uptade=======
-		if true{
-			tb := &modules.TBL_MCHT_BIZ_DEAL{OPER_IN:"I",REC_OPR_ID:"3"}
+		if true {
+			tb := &modules.TBL_MCHT_BIZ_DEAL{OPER_IN: "I", REC_OPR_ID: "3"}
 			ok, err = engine.Where("MCHT_CD = ? and PROD_CD = ? and BIZ_CD = ? and TRANS_CD = ?", "999120241110003", "1151", "0000007", "1131").Uptade(tb)
 			if err != nil {
 				fmt.Println(err)
